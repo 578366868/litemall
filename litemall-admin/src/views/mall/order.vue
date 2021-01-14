@@ -3,9 +3,10 @@
 
     <!-- 查询和其他操作 -->
     <div class="filter-container">
-      <el-input v-model="listQuery.userId" clearable class="filter-item" style="width: 160px;" placeholder="请输入用户ID" />
+      <el-input v-model="listQuery.nickname" clearable class="filter-item" style="width: 160px;" placeholder="请输入用户昵称" />
+      <el-input v-model="listQuery.consignee" clearable class="filter-item" style="width: 160px;" placeholder="请输入收货人名称" />
       <el-input v-model="listQuery.orderSn" clearable class="filter-item" style="width: 160px;" placeholder="请输入订单编号" />
-      <el-date-picker v-model="listQuery.timeArray" type="datetimerange" class="filter-item" range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期" :picker-options="pickerOptions" />
+      <el-date-picker v-model="listQuery.timeArray" type="datetimerange" value-format="yyyy-MM-dd HH:mm:ss" class="filter-item" range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期" :picker-options="pickerOptions" />
       <el-select v-model="listQuery.orderStatusArray" multiple style="width: 200px" class="filter-item" placeholder="请选择订单状态">
         <el-option v-for="(key, value) in statusMap" :key="key" :label="key" :value="value" />
       </el-select>
@@ -16,31 +17,85 @@
     <!-- 查询结果 -->
     <el-table v-loading="listLoading" :data="list" element-loading-text="正在查询中。。。" border fit highlight-current-row>
 
-      <el-table-column align="center" min-width="100" label="订单编号" prop="orderSn" />
+      <el-table-column type="expand">
+        <template slot-scope="props">
+          <div v-for="item in props.row.goodsVoList" :key="item.id" class="order-goods">
+            <div class="picture">
+              <img :src="item.picUrl" width="40">
+            </div>
+            <div class="name">
+              商品名称：{{ item.goodsName }}
+            </div>
+            <div class="spec">
+              规格：{{ item.specifications.join('-') }}
+            </div>
+            <div class="price">
+              单价：{{ item.price }} 元
+            </div>
+            <div class="num">
+              数量：{{ item.number }} 件
+            </div>
+            <div class="price">
+              小计：{{ item.price * item.number }} 元
+            </div>
+          </div>
+        </template>
+      </el-table-column>
 
-      <el-table-column align="center" label="用户ID" prop="userId" />
+      <el-table-column align="center" min-width="120" label="订单编号" prop="orderSn" />
 
+      <el-table-column align="center" label="用户头像" width="80">
+        <template slot-scope="scope">
+          <el-avatar :src="scope.row.avatar" />
+        </template>
+      </el-table-column>
+
+      <el-table-column align="center" label="下单用户" prop="userName" />
+
+      <el-table-column align="center" label="下单时间" prop="addTime" min-width="100">
+        <template slot-scope="scope">
+          {{ (scope.row.addTime || '').substring(0, 10) }}
+        </template>
+      </el-table-column>
       <el-table-column align="center" label="订单状态" prop="orderStatus">
         <template slot-scope="scope">
           <el-tag>{{ scope.row.orderStatus | orderStatusFilter }}</el-tag>
         </template>
       </el-table-column>
 
-      <el-table-column align="center" label="订单金额" prop="orderPrice" />
+      <el-table-column align="center" label="订单金额" prop="orderPrice">
+        <template slot-scope="scope">
+          {{ scope.row.orderPrice }} 元
+        </template>
+      </el-table-column>
 
-      <el-table-column align="center" label="支付金额" prop="actualPrice" />
+      <el-table-column align="center" label="实付金额" prop="actualPrice">
+        <template slot-scope="scope">
+          {{ scope.row.actualPrice }} 元
+        </template>
+      </el-table-column>
 
       <el-table-column align="center" label="支付时间" prop="payTime" />
+
+      <el-table-column align="center" label="收货人" prop="consignee">
+        <template slot-scope="scope">
+          <span style="color:red; font-weight:bold;">{{ scope.row.consignee }}</span>
+        </template>
+      </el-table-column>
+
+      <el-table-column align="center" label="收货电话" prop="mobile" min-width="100" />
 
       <el-table-column align="center" label="物流单号" prop="shipSn" />
 
       <el-table-column align="center" label="物流渠道" prop="shipChannel" />
 
-      <el-table-column align="center" label="操作" width="200" class-name="small-padding fixed-width">
+      <el-table-column align="center" label="操作" width="250" class-name="oper">
         <template slot-scope="scope">
-          <el-button v-permission="['GET /admin/order/detail']" type="primary" size="mini" @click="handleDetail(scope.row)">详情</el-button>
-          <el-button v-if="scope.row.orderStatus==201" v-permission="['POST /admin/order/ship']" type="primary" size="mini" @click="handleShip(scope.row)">发货</el-button>
-          <el-button v-if="scope.row.orderStatus==202||scope.row.orderStatus==204" v-permission="['POST /admin/order/refund']" type="primary" size="mini" @click="handleRefund(scope.row)">退款</el-button>
+          <el-button type="primary" size="mini" @click="handleDetail(scope.row)">详情</el-button>
+          <el-button type="danger" size="mini" @click="handleDelete(scope.row)">删除</el-button>
+          <el-button type="warning" size="mini" @click="handlePay(scope.row)">收款</el-button>
+          <el-button type="primary" size="mini" @click="handleShip(scope.row)">发货</el-button>
+          <el-button type="danger" size="mini" @click="handleRefund(scope.row)">退款</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -117,6 +172,39 @@
       </span>
     </el-dialog>
 
+    <!-- 收款对话框 -->
+    <el-dialog :visible.sync="payDialogVisible" title="订单收款" width="40%" center>
+      <el-form ref="payForm" :model="payForm" status-icon label-position="left" label-width="100px">
+        <div style="margin-bottom: 10px;">
+          确认当前订单（订单编号 {{ payForm.orderSn }} ) 已经完成线下收款  ？
+        </div>
+        <el-form-item label="订单金额" prop="oldMoney">
+          <el-input-number v-model="payForm.oldMoney" :controls="false" disabled />
+        </el-form-item>
+        <el-form-item label="付款金额" prop="newMoney">
+          <el-input-number v-model="payForm.newMoney" :controls="false" />
+        </el-form-item>
+      </el-form>
+      <el-table :data="payForm.goodsList">
+        <el-table-column property="goodsName" label="商品" />
+        <el-table-column label="规格">
+          <template slot-scope="scope">
+            {{ scope.row.specifications.join('-') }}
+          </template>
+        </el-table-column>
+        <el-table-column property="onumber" width="100" label="下单数量" />
+        <!-- <el-table-column label="实际数量" width="100">
+          <template slot-scope="scope">
+            <el-input-number v-model="scope.row.number" :min="0" :controls="false" />
+          </template>
+        </el-table-column> -->
+      </el-table>
+      <div slot="footer" class="dialog-footer">
+        <el-button @click="payDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="confirmPay">确定</el-button>
+      </div>
+    </el-dialog>
+
     <!-- 发货对话框 -->
     <el-dialog :visible.sync="shipDialogVisible" title="发货">
       <el-form ref="shipForm" :model="shipForm" status-icon label-position="left" label-width="100px" style="width: 400px; margin-left:50px;">
@@ -151,8 +239,53 @@
   </div>
 </template>
 
+<style lang="scss" scoped>
+.el-table--medium th, .el-table--medium td {
+    padding: 3px 0;
+}
+
+.el-input-number--medium {
+  width: 100%;
+}
+
+.oper .el-button--mini {
+  padding: 7px 4px;
+  width: 40px;
+  font-size: 10px;
+  margin-left: 1px;
+}
+
+::v-deep .el-table__expanded-cell {
+  padding: 6px 80px;
+}
+
+.order-goods {
+  display: flex;
+  justify-content: space-around;
+  justify-items: center;
+  align-items:center;
+  padding: 6px 0;
+}
+
+.name {
+  width: 400px;
+}
+
+.spec {
+  width: 180px;
+}
+
+.price {
+  width: 120px;
+}
+
+.num {
+  width: 120px;
+}
+</style>
+
 <script>
-import { detailOrder, listOrder, listChannel, refundOrder, shipOrder } from '@/api/order'
+import { detailOrder, listOrder, listChannel, refundOrder, payOrder, deleteOrder, shipOrder } from '@/api/order'
 import Pagination from '@/components/Pagination' // Secondary package based on el-pagination
 import checkPermission from '@/utils/permission' // 权限判断函数
 
@@ -184,8 +317,9 @@ export default {
       listQuery: {
         page: 1,
         limit: 20,
-        id: undefined,
-        name: undefined,
+        nickname: undefined,
+        consignee: undefined,
+        orderSn: undefined,
         timeArray: [],
         orderStatusArray: [],
         sort: 'add_time',
@@ -231,6 +365,14 @@ export default {
         shipSn: undefined
       },
       shipDialogVisible: false,
+      payForm: {
+        orderId: undefined,
+        orderSn: '',
+        oldMoney: 0,
+        newMoney: 0,
+        goodsList: []
+      },
+      payDialogVisible: false,
       refundForm: {
         orderId: undefined,
         refundMoney: undefined
@@ -248,19 +390,37 @@ export default {
     checkPermission,
     getList() {
       this.listLoading = true
-      if (this.listQuery.timeArray.length === 2) {
+      if (this.listQuery.timeArray && this.listQuery.timeArray.length === 2) {
         this.listQuery.start = this.listQuery.timeArray[0]
         this.listQuery.end = this.listQuery.timeArray[1]
+      } else {
+        this.listQuery.start = null
+        this.listQuery.end = null
       }
-      listOrder(this.listQuery).then(response => {
-        this.list = response.data.data.list
-        this.total = response.data.data.total
-        this.listLoading = false
-      }).catch(() => {
-        this.list = []
-        this.total = 0
-        this.listLoading = false
-      })
+      if (this.listQuery.orderId) {
+        detailOrder(this.listQuery.orderId).then(response => {
+          this.list = []
+          if (response.data.data.order) {
+            this.list.push(response.data.data.order)
+            this.total = 1
+            this.listLoading = false
+          }
+        }).catch(() => {
+          this.list = []
+          this.total = 0
+          this.listLoading = false
+        })
+      } else {
+        listOrder(this.listQuery).then(response => {
+          this.list = response.data.data.list
+          this.total = response.data.data.total
+          this.listLoading = false
+        }).catch(() => {
+          this.list = []
+          this.total = 0
+          this.listLoading = false
+        })
+      }
     },
     getChannel() {
       listChannel().then(response => {
@@ -276,6 +436,45 @@ export default {
         this.orderDetail = response.data.data
       })
       this.orderDialogVisible = true
+    },
+    handlePay(row) {
+      this.payForm.orderId = row.id
+      this.payForm.orderSn = row.orderSn
+      this.payForm.oldMoney = row.actualPrice
+      this.payForm.newMoney = row.actualPrice
+      this.payForm.goodsList = row.goodsVoList
+      this.payForm.goodsList.forEach(element => {
+        element.onumber = element.number
+      })
+      this.payDialogVisible = true
+    },
+    confirmPay() {
+      if (this.payForm.oldMoney !== this.payForm.newMoney) {
+        const diff = this.payForm.newMoney - this.payForm.oldMoney
+        this.$confirm('差额 ' + diff + '元， 是否确认提交')
+          .then(_ => {
+            this.confirmPay2()
+          })
+          .catch(_ => {})
+      } else {
+        this.confirmPay2()
+      }
+    },
+    confirmPay2() {
+      payOrder(this.payForm).then(response => {
+        this.$notify.success({
+          title: '成功',
+          message: '订单收款操作成功'
+        })
+        this.getList()
+      }).catch(response => {
+        this.$notify.error({
+          title: '失败',
+          message: response.data.errmsg
+        })
+      }).finally(() => {
+        this.payDialogVisible = false
+      })
     },
     handleShip(row) {
       this.shipForm.orderId = row.id
@@ -304,6 +503,20 @@ export default {
             })
           })
         }
+      })
+    },
+    handleDelete(row) {
+      deleteOrder({ orderId: row.id }).then(response => {
+        this.$notify.success({
+          title: '成功',
+          message: '订单删除成功'
+        })
+        this.getList()
+      }).catch(response => {
+        this.$notify.error({
+          title: '失败',
+          message: response.data.errmsg
+        })
       })
     },
     handleRefund(row) {

@@ -21,6 +21,7 @@ Page({
     cartGoodsCount: 0,
     userHasCollect: 0,
     number: 1,
+    tmpPicUrl: '',
     checkedSpecText: '规格数量选择',
     tmpSpecText: '请选择规格数量',
     checkedSpecPrice: 0,
@@ -85,8 +86,8 @@ Page({
           filePath: res.tempFilePath,
           success: function(res) {
             wx.showModal({
-              title: '存图成功',
-              content: '图片成功保存到相册了，可以分享到朋友圈了',
+              title: '生成海报成功',
+              content: '海报已成功保存到相册，可以分享到朋友圈了',
               showCancel: false,
               confirmText: '好的',
               confirmColor: '#a78845',
@@ -133,7 +134,9 @@ Page({
     }).then(function(res) {
       if (res.errno === 0) {
 
-        let _specificationList = res.data.specificationList
+        let _specificationList = res.data.specificationList;
+        let _tmpPicUrl = res.data.productList[0].url;
+        //console.log("pic: "+_tmpPicUrl);
         // 如果仅仅存在一种货品，那么商品页面初始化时默认checked
         if (_specificationList.length == 1) {
           if (_specificationList[0].valueList.length == 1) {
@@ -149,7 +152,7 @@ Page({
 
             that.setData({
               checkedSpecText: _specificationList[0].valueList[0].value,
-              tmpSpecText: '已选择：' + _specificationList[0].valueList[0].value,
+              tmpSpecText: '已选择：' + _specificationList[0].valueList[0].value
             });
           }
         }
@@ -167,8 +170,11 @@ Page({
           checkedSpecPrice: res.data.info.retailPrice,
           groupon: res.data.groupon,
           canShare: res.data.share,
+          //选择规格时，默认展示第一张图片
+          tmpPicUrl: _tmpPicUrl
         });
 
+        
         //如果是通过分享的团购参加团购，则团购项目应该与分享的一致并且不可更改
         if (that.data.isGroupon) {
           let groupons = that.data.groupon;
@@ -372,9 +378,11 @@ Page({
       }
 
       let checkedProduct = checkedProductArray[0];
+      //console.log("checkedProduct: "+checkedProduct.url);
       if (checkedProduct.number > 0) {
         this.setData({
           checkedSpecPrice: checkedProduct.price,
+          tmpPicUrl: checkedProduct.url,
           soldout: false
         });
       } else {

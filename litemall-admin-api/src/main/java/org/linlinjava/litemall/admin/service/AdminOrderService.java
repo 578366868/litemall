@@ -1,5 +1,6 @@
 package org.linlinjava.litemall.admin.service;
 
+import com.github.binarywang.wxpay.bean.notify.WxPayNotifyResponse;
 import com.github.binarywang.wxpay.bean.request.WxPayRefundRequest;
 import com.github.binarywang.wxpay.bean.result.WxPayRefundResult;
 import com.github.binarywang.wxpay.exception.WxPayException;
@@ -8,13 +9,13 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.linlinjava.litemall.core.notify.NotifyService;
 import org.linlinjava.litemall.core.notify.NotifyType;
+import org.linlinjava.litemall.core.util.DateTimeUtil;
 import org.linlinjava.litemall.core.util.JacksonUtil;
 import org.linlinjava.litemall.core.util.ResponseUtil;
-import org.linlinjava.litemall.db.domain.LitemallComment;
-import org.linlinjava.litemall.db.domain.LitemallOrder;
-import org.linlinjava.litemall.db.domain.LitemallOrderGoods;
-import org.linlinjava.litemall.db.domain.UserVo;
+import org.linlinjava.litemall.db.domain.*;
 import org.linlinjava.litemall.db.service.*;
+import org.linlinjava.litemall.db.util.CouponUserConstant;
+import org.linlinjava.litemall.db.util.GrouponConstant;
 import org.linlinjava.litemall.db.util.OrderUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -28,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.linlinjava.litemall.admin.util.AdminResponseCode.*;
+import static org.linlinjava.litemall.admin.util.AdminResponseCode.ORDER_PAY_FAILED;
 
 @Service
 
@@ -50,12 +52,13 @@ public class AdminOrderService {
     private NotifyService notifyService;
     @Autowired
     private LogHelper logHelper;
+    @Autowired
+    private LitemallCouponUserService couponUserService;
 
-    public Object list(Integer userId, String orderSn, LocalDateTime start, LocalDateTime end, List<Short> orderStatusArray,
+    public Object list(String nickname, String consignee, String orderSn, LocalDateTime start, LocalDateTime end, List<Short> orderStatusArray,
                        Integer page, Integer limit, String sort, String order) {
-        List<LitemallOrder> orderList = orderService.querySelective(userId, orderSn, start, end, orderStatusArray, page, limit,
-                sort, order);
-        return ResponseUtil.okList(orderList);
+        Map<String, Object> data = (Map)orderService.queryVoSelective(nickname, consignee, orderSn, start, end, orderStatusArray, page, limit, sort, order);
+        return ResponseUtil.ok(data);
     }
 
     public Object detail(Integer id) {
@@ -159,6 +162,15 @@ public class AdminOrderService {
             }
         }
 
+        // 返还优惠券
+        List<LitemallCouponUser> couponUsers = couponUserService.findByOid(orderId);
+        for (LitemallCouponUser couponUser: couponUsers) {
+            // 优惠券状态设置为可使用
+            couponUser.setStatus(CouponUserConstant.STATUS_USABLE);
+            couponUser.setUpdateTime(LocalDateTime.now());
+            couponUserService.update(couponUser);
+        }
+
         //TODO 发送邮件和短信通知，这里采用异步发送
         // 退款成功通知用户, 例如“您申请的订单退款 [ 单号:{1} ] 已成功，请耐心等待到账。”
         // 注意订单号只发后6位
@@ -214,6 +226,37 @@ public class AdminOrderService {
         return ResponseUtil.ok();
     }
 
+    /**
+     * 删除订单
+     * 1. 检测当前订单是否能够删除
+     * 2. 删除订单
+     *
+     * @param body 订单信息，{ orderId：xxx }
+     * @return 订单操作结果
+     * 成功则 { errno: 0, errmsg: '成功' }
+     * 失败则 { errno: XXX, errmsg: XXX }
+     */
+    public Object delete(String body) {
+        Integer orderId = JacksonUtil.parseInteger(body, "orderId");
+        LitemallOrder order = orderService.findById(orderId);
+        if (order == null) {
+            return ResponseUtil.badArgument();
+        }
+
+        // 如果订单不是关闭状态(已取消、系统取消、已退款、用户已确认、系统已确认)，则不能删除
+        Short status = order.getOrderStatus();
+        if (!status.equals(OrderUtil.STATUS_CANCEL) && !status.equals(OrderUtil.STATUS_AUTO_CANCEL) &&
+                !status.equals(OrderUtil.STATUS_CONFIRM) &&!status.equals(OrderUtil.STATUS_AUTO_CONFIRM) &&
+                !status.equals(OrderUtil.STATUS_REFUND_CONFIRM)) {
+            return ResponseUtil.fail(ORDER_DELETE_FAILED, "订单不能删除");
+        }
+        // 删除订单
+        orderService.deleteById(orderId);
+        // 删除订单商品
+        orderGoodsService.deleteByOrderId(orderId);
+        logHelper.logOrderSucceed("删除", "订单编号 " + order.getOrderSn());
+        return ResponseUtil.ok();
+    }
 
     /**
      * 回复订单商品
@@ -247,4 +290,29 @@ public class AdminOrderService {
         return ResponseUtil.ok();
     }
 
+    public Object pay(String body) {
+        Integer orderId = JacksonUtil.parseInteger(body, "orderId");
+        String newMoney = JacksonUtil.parseString(body, "newMoney");
+
+        if (orderId == null || StringUtils.isEmpty(newMoney)) {
+            return ResponseUtil.badArgument();
+        }
+        BigDecimal actualPrice = new BigDecimal(newMoney);
+
+        LitemallOrder order = orderService.findById(orderId);
+        if (order == null) {
+            return ResponseUtil.badArgument();
+        }
+        if (!order.getOrderStatus().equals(OrderUtil.STATUS_CREATE)) {
+            return ResponseUtil.fail(ORDER_PAY_FAILED, "当前订单状态不支持线下收款");
+        }
+
+        order.setActualPrice(actualPrice);
+        order.setOrderStatus(OrderUtil.STATUS_PAY);
+        if (orderService.updateWithOptimisticLocker(order) == 0) {
+            return WxPayNotifyResponse.fail("更新数据已失效");
+        }
+
+        return ResponseUtil.ok();
+    }
 }
